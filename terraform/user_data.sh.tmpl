@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+
+dnf update -y
+dnf install -y docker
+systemctl enable docker
+systemctl start docker
+
+docker pull ${docker_image}
+
+docker rm -f eth-balance-api || true
+docker run -d \
+  --name eth-balance-api \
+  --restart unless-stopped \
+  -p ${port}:${port} \
+  -e PORT=${port} \
+  -e INFURA_URL='${infura_url}' \
+  ${docker_image}
