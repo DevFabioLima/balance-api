@@ -11,6 +11,50 @@ Small Go API that reads Ethereum account balances from Infura and returns ETH va
 - Terraform for AWS EC2 deployment
 - GitHub Actions CI/CD pipeline
 
+## Architecture (C4 - simple)
+
+### Level 1 - System Context
+
+```mermaid
+flowchart LR
+    user[Person: API Consumer]
+    gh[Person: Developer on GitHub]
+    gha[System: GitHub Actions CI/CD]
+    api[System: Ethereum Balance API]
+    infura[External System: Infura Ethereum JSON-RPC]
+    dockerhub[External System: Docker Hub Registry]
+    aws[External System: AWS EC2]
+
+    user -->|HTTP GET /address/balance| api
+    api -->|eth_getBalance| infura
+    gh -->|Push to main / manual dispatch| gha
+    gha -->|Build and push image| dockerhub
+    gha -->|SSH deploy| aws
+    dockerhub -->|Image pull| aws
+```
+
+### Level 2 - Container View (inside this project)
+
+```mermaid
+flowchart TB
+    client[Client]
+    router[HTTP Router and Handlers\ninternal/interfaces/http]
+    app[Application Use Cases\ninternal/application]
+    domain[Domain Models\ninternal/domain]
+    ports[Ports Interfaces\ninternal/ports]
+    infuraAdapter[Infura Client Adapter\ninternal/infrastructure/infura]
+    historyAdapter[In-memory History Adapter\ninternal/infrastructure/history]
+    infura[Infura API]
+
+    client --> router
+    router --> app
+    app --> domain
+    app --> ports
+    ports --> infuraAdapter
+    ports --> historyAdapter
+    infuraAdapter --> infura
+```
+
 ## API examples
 
 ### Get balance
@@ -88,6 +132,12 @@ docker run --rm -p 8080:8080 \
 
 Files are in `terraform/`.
 
+What Terraform provisions:
+- VPC + public subnet + internet gateway + route table
+- Security group (SSH and API port ingress)
+- EC2 key pair from your local public key
+- One EC2 instance running Dockerized API via `user_data`
+
 1. Create vars file:
 
 ```bash
@@ -98,9 +148,11 @@ cp terraform.tfvars.example terraform.tfvars
 2. Fill `terraform.tfvars`:
 
 - `ssh_allowed_cidr`: your public IP in CIDR format
+- `api_allowed_cidr`: CIDR allowed to call API (default `0.0.0.0/0`)
 - `public_key_path`: path to your SSH public key
 - `docker_image`: Docker Hub image/tag
 - `infura_url`: Infura endpoint
+- `port`: API container port (default `8080`)
 
 3. Deploy:
 
@@ -116,14 +168,36 @@ terraform apply
 terraform output api_base_url
 ```
 
+5. Destroy (when done):
+
+```bash
+terraform destroy
+```
+
+Notes:
+- Keep `terraform.tfvars` out of git (already ignored).
+- Restrict `ssh_allowed_cidr` to your exact IP (`x.x.x.x/32`) for safer access.
+- For production-like setups, prefer ALB + ASG + HTTPS (ACM) instead of a single public EC2.
+
 ## GitHub Actions CI/CD
 
 Workflow: `.github/workflows/ci-cd.yml`
 
-On push to `main`:
-- run tests
-- build and push Docker image to Docker Hub
-- SSH into EC2 and restart container with the new image
+Triggers:
+- Push to `main`
+- Manual run (`workflow_dispatch`)
+
+Pipeline stages:
+1. **test-build-push**
+   - Setup Go from `go.mod`
+   - Run `go test ./...`
+   - Build image with tags: short SHA + `latest`
+   - Push both tags to Docker Hub
+2. **deploy**
+   - Connect to EC2 over SSH
+   - Pull SHA-tagged image
+   - Replace running container (`eth-balance-api`)
+   - Start with `--restart unless-stopped`, `PORT`, and `INFURA_URL`
 
 Configure these GitHub secrets:
 - `DOCKERHUB_USERNAME`
@@ -132,6 +206,11 @@ Configure these GitHub secrets:
 - `EC2_USER`
 - `EC2_SSH_PRIVATE_KEY`
 - `INFURA_URL`
+
+Recommended extra checks to add next:
+- `go vet ./...`
+- Static analysis (`golangci-lint`)
+- Optional Terraform format/validate job for `terraform/`
 
 ## Pre-commit safety check
 
