@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/fabio-lima/go-api/internal/application"
 )
@@ -57,14 +58,34 @@ func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetRequestHistory(w http.ResponseWriter, r *http.Request) {
+	limit, err := parseHistoryLimit(r, h.defaultHistoryLimit)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'limit' query parameter"})
+		return
+	}
+
 	result, err := h.getHistoryUseCase.Execute(r.Context(), application.GetRequestHistoryInput{
-		Limit: h.defaultHistoryLimit,
+		Limit: limit,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list request history"})
 		return
 	}
 	writeJSON(w, http.StatusOK, result.Records)
+}
+
+func parseHistoryLimit(r *http.Request, defaultLimit int) (int, error) {
+	rawLimit := r.URL.Query().Get("limit")
+	if rawLimit == "" {
+		return defaultLimit, nil
+	}
+
+	limit, err := strconv.Atoi(rawLimit)
+	if err != nil || limit <= 0 {
+		return 0, errors.New("invalid limit")
+	}
+
+	return limit, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

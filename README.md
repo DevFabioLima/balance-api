@@ -77,6 +77,12 @@ Response:
 curl "http://localhost:8080/requests/history"
 ```
 
+Optional limit:
+
+```bash
+curl "http://localhost:8080/requests/history?limit=10"
+```
+
 ## Local development
 
 ### Prerequisites
